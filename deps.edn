@@ -1,0 +1,6 @@
+{:paths ["src"]
+ :deps  {}
+ :aliases
+ {:nrepl
+  {:extra-deps {nrepl/nrepl {:mvn/version "1.1.0"}}
+   :main-opts ["-m" "nrepl.cmdline" "--interactive" "--color"]}}}
