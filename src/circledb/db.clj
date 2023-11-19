@@ -16,8 +16,9 @@
    (Entity. id {})))
 
 (defn make-attr
-  ([name value type & {:keys [cardinality] :or {cardinality :db/single}}]
-   {:pre [(contains? #{:db/single :db/multiple} cardinality)]}
+  ([name value type
+    & {:keys [cardinality] :or {cardinality :db.cardinality/one}}]
+   {:pre [(contains? #{:db.cardinality/one :db.cardinality/many} cardinality)]}
    (with-meta (Attr. name value -1 -1) {:type type :cardinality cardinality})))
 
 (defn add-attr [ent attr]
@@ -44,11 +45,11 @@
 
 (defn always [& _more]
   true)
-(defn make-db []
 
+(defn make-db []
   (atom
    (Database. [(Layer.
-                (circledb.storage.InMemory.)
+                (storage/->InMemory)
                 (make-index #(vector %3 %2 %1) #(vector %3 %2 %1) #(ref? %))
                 (make-index #(vector %2 %3 %1) #(vector %2 %3 %1) always)
                 (make-index #(vector %3 %1 %2) #(vector %3 %1 %2) always)
@@ -64,7 +65,7 @@
 
 (defn attr-at
   ([db ent-id attr-name]
-   (attr-at  ent-id attr-name (:curr-time db)))
+   (attr-at db ent-id attr-name (:curr-time db)))
   ([db ent-id attr-name ts]
    (get-in (entity-at db ent-id ts) [:attrs attr-name])))
 
@@ -84,13 +85,4 @@
   (if (coll? x) x [x]))
 
 (defn single? [attr]
-  (= :db/single (:cardinality (meta attr))))
-
-(comment
-  (make-entity)
-  (make-entity 1)
-  (make-attr "name" "ryan" 'string)
-  (let [ent (make-entity)
-        attr (make-attr "name" "ryan" 'string)]
-    (add-attr ent attr))
-  (make-db))
+  (= :db.cardinality/one (:cardinality (meta attr))))

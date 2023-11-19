@@ -8,7 +8,7 @@
 (defrecord InMemory []
   Storage
   (get-entity [storage e-id]
-    (e-id storage))
+    (get storage e-id))
   (write-entity [storage entity]
     (assoc storage (:id entity) entity))
   (drop-entity [storage entity]

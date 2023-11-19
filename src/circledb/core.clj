@@ -1,7 +1,8 @@
 (ns circledb.core
   (:require [clojure.set :as cset]
             [circledb.db :as db]
-            [circledb.storage :as storage]))
+            [circledb.storage :as storage]
+            [circledb.util :as util]))
 
 (defn evolution-of [db ent-id attr-name]
   (loop [res []
@@ -14,11 +15,6 @@
 (defn- next-ts [db]
   (inc (:curr-time db)))
 
-(defn- update-creation-ts [ent ts-val]
-  (reduce #(assoc-in %1 [:attrs %2 :ts] ts-val)
-          ent
-          (keys (:attrs ent))))
-
 (defn- next-id [db ent]
   (let [top-id (:top-id db)
         ent-id (:id ent)
@@ -27,19 +23,24 @@
       [(keyword (str new-id)) new-id]
       [ent-id top-id])))
 
+(defn- update-creation-ts [ent ts-val]
+  (reduce #(assoc-in %1 [:attrs %2 :ts] ts-val)
+          ent
+          (keys (:attrs ent))))
+
 (defn- fix-new-entity [db ent]
   (let [[ent-id next-top-id] (next-id db ent)
         new-ts (next-ts db)]
     [(update-creation-ts (assoc ent :id ent-id) new-ts) next-top-id]))
 
-(defn- update-entry-in-index [index path operation]
+(defn- update-entry-in-index [index path _operation]
   (let [update-path (butlast path)
         update-val  (last path)
         to-be-updated-set (get-in index update-path #{})]
     (assoc-in index update-path (conj to-be-updated-set update-val))))
 
-(defn- update-attr-in-index [index ent-id attr-name target-val operation]
-  (let [colled-target-val (db/collify target-val)
+(defn- update-attr-in-index [index ent-id attr-name attr-val operation]
+  (let [colled-target-val (db/collify attr-val)
         update-entry-fn   (fn [i val]
                             (update-entry-in-index
                              i
@@ -56,10 +57,13 @@
                           (let [{:keys [name value]} attr]
                             (update-attr-in-index i
                                                   ent-id
-                                                  name value
+                                                  name
+                                                  value
                                                   :db/add)))]
     (assoc layer index-name (reduce add-in-index-fn index relevant-attrs))))
 
+;; curr-time is not updated here, but in transactions. add-entity is an 
+;; operation on the db, but not a single transaction
 (defn add-entity [db ent]
   (let [[fixed-ent next-top-id] (fix-new-entity db ent)
         new-storage-layer (update-in (last (:layers db))
@@ -76,15 +80,15 @@
   (reduce add-entity db ents-seq))
 
 (defn- update-attr-modification-time [attr new-ts]
-  (assoc attr :ts new-ts :prev-s (:ts attr)))
+  (assoc attr :ts new-ts :prev-ts (:ts attr)))
 
 (defn- update-attr-value [attr val operation]
   (if (db/single? attr)
-    (assoc attr :value #{val})
+    (assoc attr :value val) ;; not sure why the original uses a set here #{val}
     (case operation
       :db/reset-to (assoc attr :value val)
       :db/add      (assoc attr :value (cset/union (:value attr) val))
-      :db/remove   (assoc attr :value (cset/difference (:value attr) val)))))
+      :db/remove   (assoc attr :value (cset/difference (:value attr) #{val})))))
 
 (defn- update-attr [attr new-val new-ts operation]
   {:pre [(if (db/single? attr)
@@ -109,7 +113,8 @@
       index
 
       (= 1 (count old-entries-set))
-      (update-in index [path-head] dissoc (second path))
+      ;; changed to dissoc-in to not leave any empty maps behind
+      (util/dissoc-in index [path-head (second path)])
 
       :else
       (update-in index path-to-items disj val-to-remove))))
@@ -178,9 +183,11 @@
                                   :db/remove)]
     (assoc layer index-name (reduce rm-from-index-fn index relevant-attrs))))
 
+;; NOTE: don't use ent-id as the lookup function if the db is to support 
+;; non-keyword ent-ids. use get instead, or use the map as the function.
 (defn- reffing-to [ent-id layer]
   (let [vaet (:VAET layer)]
-    (for [[attr-name reffing-set] (ent-id vaet)
+    (for [[attr-name reffing-set] (vaet ent-id)
           reffing reffing-set]
       [reffing attr-name])))
 
@@ -226,6 +233,8 @@
         (recur rest-tx# res# (conj acc-txs# (vec first-tx#)))
         (list* (conj res# acc-txs#))))))
 
+;; probably doesn't work for transactions where an entity is added and updated 
+;; or removed at the same time (in the same transaction).
 (defmacro transact [db-conn & txs]
   `(_transact ~db-conn swap! ~@txs))
 
@@ -234,34 +243,3 @@
 
 (defn -main [& _args]
   (println "hi world"))
-
-(comment
-  (let [d    (db/make-db)
-        ent1 (-> (db/make-entity 167)
-                 (db/add-attr
-                  (db/make-attr :person/name "James Cameron" "string")))
-        ent2 (-> (db/make-entity 234)
-                 (db/add-attr
-                  (db/make-attr :movie/title "Die Hard" "string"))
-                 (db/add-attr
-                  (db/make-attr :movie/year 1987 "integer")))
-        ent3 (-> (db/make-entity 235)
-                 (db/add-attr
-                  (db/make-attr :movie/title "Terminator" "string"))
-                 (db/add-attr
-                  (db/make-attr :movie/director 167 :db/ref)))]
-    (transact d
-              (add-entity ent1)
-              (add-entity ent2)
-              (add-entity ent3))
-    #_(circledb.query/q @d
-                        {:find  [?e]
-                         :where [[?e :movie/year 1987]]})
-    (circledb.query/q @d
-                      {:find  [?e ?title]
-                       :where [[?e :movie/title ?title]]})
-    #_(circledb.query/q @d
-                        {:find  [?name]
-                         :where [[?m :movie/title "Robocop"]
-                                 [?m :movie/director ?d]
-                                 [?d :person/name ?name]]})))
