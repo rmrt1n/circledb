@@ -17,3 +17,8 @@ Added tests for the core db functions to understand how they work better. Got a
 decent understanding of it now, and found some edge cases. Might change the core
 apis to match xtdb's since that's what I'm most familiar with. Now reading more
 on the transaction macros. Still no idea how the query engine works.
+
+### Attempt 2.1
+I now understand how a datalog query engine works. Read 
+[this article](https://www.instantdb.com/essays/datalogjs) by Instant. A `.clj` 
+version of their JavaScript implementation is in [main.clj](/main.clj).
